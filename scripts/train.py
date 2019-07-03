@@ -19,6 +19,8 @@ from sgan.models import TrajectoryGenerator, TrajectoryDiscriminator
 from sgan.utils import int_tuple, bool_flag, get_total_norm
 from sgan.utils import relative_to_abs, get_dset_path
 
+import ipdb
+
 torch.backends.cudnn.benchmark = True
 
 parser = argparse.ArgumentParser()
@@ -28,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 # Dataset options
 parser.add_argument('--dataset_name', default='zara1', type=str)
-parser.add_argument('--delim', default=' ')
+parser.add_argument('--delim', default='\t')
 parser.add_argument('--loader_num_workers', default=4, type=int)
 parser.add_argument('--obs_len', default=8, type=int)
 parser.add_argument('--pred_len', default=8, type=int)
@@ -40,20 +42,20 @@ parser.add_argument('--num_iterations', default=10000, type=int)
 parser.add_argument('--num_epochs', default=200, type=int)
 
 # Model Options
-parser.add_argument('--embedding_dim', default=64, type=int)
+parser.add_argument('--embedding_dim', default=16, type=int)
 parser.add_argument('--num_layers', default=1, type=int)
 parser.add_argument('--dropout', default=0, type=float)
 parser.add_argument('--batch_norm', default=0, type=bool_flag)
 parser.add_argument('--mlp_dim', default=1024, type=int)
 
 # Generator Options
-parser.add_argument('--encoder_h_dim_g', default=64, type=int)
-parser.add_argument('--decoder_h_dim_g', default=128, type=int)
-parser.add_argument('--noise_dim', default=None, type=int_tuple)
+parser.add_argument('--encoder_h_dim_g', default=16, type=int)
+parser.add_argument('--decoder_h_dim_g', default=32, type=int)
+parser.add_argument('--noise_dim', default=(8,), type=int_tuple)
 parser.add_argument('--noise_type', default='gaussian')
 parser.add_argument('--noise_mix_type', default='ped')
 parser.add_argument('--clipping_threshold_g', default=0, type=float)
-parser.add_argument('--g_learning_rate', default=5e-4, type=float)
+parser.add_argument('--g_learning_rate', default=1e-3, type=float)
 parser.add_argument('--g_steps', default=1, type=int)
 
 # Pooling Options
@@ -69,17 +71,17 @@ parser.add_argument('--grid_size', default=8, type=int)
 
 # Discriminator Options
 parser.add_argument('--d_type', default='local', type=str)
-parser.add_argument('--encoder_h_dim_d', default=64, type=int)
-parser.add_argument('--d_learning_rate', default=5e-4, type=float)
+parser.add_argument('--encoder_h_dim_d', default=16, type=int)
+parser.add_argument('--d_learning_rate', default=1e-3, type=float)
 parser.add_argument('--d_steps', default=2, type=int)
 parser.add_argument('--clipping_threshold_d', default=0, type=float)
 
 # Loss Options
-parser.add_argument('--l2_loss_weight', default=0, type=float)
+parser.add_argument('--l2_loss_weight', default=0.5, type=float)
 parser.add_argument('--best_k', default=1, type=int)
 
 # Output
-parser.add_argument('--output_dir', default=os.getcwd())
+parser.add_argument('--output_dir', default=os.path.join(os.getcwd(), 'checkpoints'))
 parser.add_argument('--print_every', default=5, type=int)
 parser.add_argument('--checkpoint_every', default=100, type=int)
 parser.add_argument('--checkpoint_name', default='checkpoint')
@@ -119,6 +121,7 @@ def main(args):
     train_dset, train_loader = data_loader(args, train_path)
     logger.info("Initializing val dataset")
     _, val_loader = data_loader(args, val_path)
+
 
     iterations_per_epoch = len(train_dset) / args.batch_size / args.d_steps
     if args.num_epochs:
