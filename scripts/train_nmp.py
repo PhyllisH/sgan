@@ -15,7 +15,7 @@ from sgan.data.loader import data_loader
 from sgan.losses import gan_g_loss, gan_d_loss, l2_loss
 from sgan.losses import displacement_error, final_displacement_error
 
-from sgan.models import TrajectoryGenerator, TrajectoryDiscriminator
+from sgan.nmp_models import TrajectoryGenerator, TrajectoryDiscriminator
 from sgan.utils import int_tuple, bool_flag, get_total_norm
 from sgan.utils import relative_to_abs, get_dset_path
 
@@ -59,7 +59,7 @@ parser.add_argument('--g_learning_rate', default=1e-4, type=float)
 parser.add_argument('--g_steps', default=1, type=int)
 
 # Pooling Options
-parser.add_argument('--pooling_type', default='pool_net')
+parser.add_argument('--pooling_type', default='nmp')
 parser.add_argument('--pool_every_timestep', default=0, type=bool_flag)
 
 # Pool Net Option
@@ -84,7 +84,7 @@ parser.add_argument('--best_k', default=20, type=int)
 parser.add_argument('--output_dir', default=os.path.join(os.getcwd(), 'checkpoints'))
 parser.add_argument('--print_every', default=100, type=int)
 parser.add_argument('--checkpoint_every', default=300, type=int)
-parser.add_argument('--checkpoint_name', default='zara1_default_para')
+parser.add_argument('--checkpoint_name', default='zara1_nmp')
 parser.add_argument('--checkpoint_start_from', default=None)
 parser.add_argument('--restore_from_checkpoint', default=1, type=int)
 parser.add_argument('--num_samples_check', default=5000, type=int)
@@ -119,6 +119,7 @@ def main(args):
 
     logger.info("Initializing train dataset")
     train_dset, train_loader = data_loader(args, train_path)
+    
     logger.info("Initializing val dataset")
     _, val_loader = data_loader(args, val_path)
 

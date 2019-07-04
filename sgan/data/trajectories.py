@@ -182,6 +182,7 @@ class TrajectoryDataset(Dataset):
 
     def __getitem__(self, index):
         start, end = self.seq_start_end[index]
+        # print(start,end)
         out = [
             self.obs_traj[start:end, :], self.pred_traj[start:end, :],
             self.obs_traj_rel[start:end, :], self.pred_traj_rel[start:end, :],
