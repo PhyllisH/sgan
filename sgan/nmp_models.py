@@ -1,5 +1,7 @@
 import torch
 import torch.nn as nn
+import numpy as np
+import ipdb
 
 def encode_onehot(labels):
     classes = set(labels)
@@ -217,7 +219,7 @@ class NmpNet(nn.Module):
         # NOTE: Assumes that we have the same graph across all samples.
         receivers = torch.matmul(rel_rec, x)
         senders = torch.matmul(rel_send, x)
-        edges = torch.cat([receivers, senders], dim=2)
+        edges = torch.cat([receivers, senders], dim=1)
         return edges
 
     def init_adj(self, num_ped):
@@ -262,7 +264,7 @@ class NmpNet(nn.Module):
             curr_rel_embedding = self.spatial_embedding(curr_rel_pos)
 
             # Neural Message Passing
-            rel_rec, rel_send = self.init_adj(num_pred)
+            rel_rec, rel_send = self.init_adj(num_ped)
             edge_feat = self.node2edge(curr_hidden, rel_rec, rel_send) # [num_pred*(num_pred-1), h_dim*2]
             edge_feat = torch.cat([edge_feat, curr_rel_embedding], dim=1)    # [num_pred*(num_pred-1), h_dim*2+embedding_dim]
             edge_feat = self.mlp1(edge_feat)                      # [num_pred*(num_pred-1), h_dim]
