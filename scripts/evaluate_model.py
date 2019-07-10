@@ -5,9 +5,11 @@ import torch
 from attrdict import AttrDict
 
 from sgan.data.loader import data_loader
-from sgan.models import TrajectoryGenerator
+from sgan.nmp_models import TrajectoryGenerator, NewNMPTrajectoryGenerator
 from sgan.losses import displacement_error, final_displacement_error
 from sgan.utils import relative_to_abs, get_dset_path
+
+import ipdb
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--model_path', type=str)
@@ -17,7 +19,7 @@ parser.add_argument('--dset_type', default='test', type=str)
 
 def get_generator(checkpoint):
     args = AttrDict(checkpoint['args'])
-    generator = TrajectoryGenerator(
+    generator = NewNMPTrajectoryGenerator(
         obs_len=args.obs_len,
         pred_len=args.pred_len,
         embedding_dim=args.embedding_dim,
@@ -35,6 +37,7 @@ def get_generator(checkpoint):
         neighborhood_size=args.neighborhood_size,
         grid_size=args.grid_size,
         batch_norm=args.batch_norm)
+
     generator.load_state_dict(checkpoint['g_state'])
     generator.cuda()
     generator.train()

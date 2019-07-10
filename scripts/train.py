@@ -580,4 +580,15 @@ def cal_fde(
 
 if __name__ == '__main__':
     args = parser.parse_args()
+    if args.dataset_name == 'eth':
+        args.num_iterations = 7818
+    elif args.dataset_name == 'hotel':
+        args.num_iterations = 7437
+    elif args.dataset_name == 'univ':
+        args.num_iterations = 5540
+    elif args.dataset_name == 'zara1':
+        args.num_iterations = 6318
+    elif args.dataset_name == 'zara2':
+        args.num_iterations = 5987
+    args.checkpoint_name = '{}_default_para'.format(args.dataset_name)
     main(args)

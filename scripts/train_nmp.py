@@ -15,11 +15,12 @@ from sgan.data.loader import data_loader
 from sgan.losses import gan_g_loss, gan_d_loss, l2_loss
 from sgan.losses import displacement_error, final_displacement_error
 
-from sgan.nmp_models import TrajectoryGenerator, TrajectoryDiscriminator
+from sgan.nmp_models import *
 from sgan.utils import int_tuple, bool_flag, get_total_norm
 from sgan.utils import relative_to_abs, get_dset_path
 
 import ipdb
+from tqdm import tqdm
 
 torch.backends.cudnn.benchmark = True
 
@@ -60,10 +61,10 @@ parser.add_argument('--g_steps', default=1, type=int)
 
 # Pooling Options
 parser.add_argument('--pooling_type', default='nmp')
-parser.add_argument('--pool_every_timestep', default=0, type=bool_flag)
+parser.add_argument('--pool_every_timestep', default=1, type=bool_flag)
 
 # Pool Net Option
-parser.add_argument('--bottleneck_dim', default=8, type=int)
+parser.add_argument('--bottleneck_dim', default=64, type=int)
 
 # Social Pooling Options
 parser.add_argument('--neighborhood_size', default=2.0, type=float)
@@ -86,7 +87,7 @@ parser.add_argument('--print_every', default=100, type=int)
 parser.add_argument('--checkpoint_every', default=300, type=int)
 parser.add_argument('--checkpoint_name', default='zara1_nmp')
 parser.add_argument('--checkpoint_start_from', default=None)
-parser.add_argument('--restore_from_checkpoint', default=1, type=int)
+parser.add_argument('--restore_from_checkpoint', default=0, type=int)
 parser.add_argument('--num_samples_check', default=5000, type=int)
 
 # Misc
@@ -132,7 +133,7 @@ def main(args):
         'There are {} iterations per epoch'.format(iterations_per_epoch)
     )
 
-    generator = TrajectoryGenerator(
+    generator = NewNMPTrajectoryGenerator(
         obs_len=args.obs_len,
         pred_len=args.pred_len,
         embedding_dim=args.embedding_dim,
@@ -228,6 +229,7 @@ def main(args):
             'best_t_nl': None,
         }
     t0 = None
+    pbar = tqdm(total=args.num_iterations)
     while t < args.num_iterations:
         gc.collect()
         d_steps_left = args.d_steps
@@ -361,6 +363,8 @@ def main(args):
             g_steps_left = args.g_steps
             if t >= args.num_iterations:
                 break
+            pbar.update(1)
+    pbar.close()
 
 
 def discriminator_step(
@@ -581,4 +585,14 @@ def cal_fde(
 
 if __name__ == '__main__':
     args = parser.parse_args()
+    if args.dataset_name == 'eth':
+        args.num_iterations = 7818
+    elif args.dataset_name == 'hotel':
+        args.num_iterations = 7437
+    elif args.dataset_name == 'univ':
+        args.num_iterations = 5540
+    elif args.dataset_name == 'zara1':
+        args.num_iterations = 6318
+    elif args.dataset_name == 'zara2':
+        args.num_iterations = 5987
     main(args)

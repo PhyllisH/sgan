@@ -43,7 +43,6 @@ class Encoder(nn.Module):
     ):
         super(Encoder, self).__init__()
 
-        self.mlp_dim = 1024
         self.h_dim = h_dim
         self.embedding_dim = embedding_dim
         self.num_layers = num_layers
@@ -119,6 +118,15 @@ class Decoder(nn.Module):
                     neighborhood_size=neighborhood_size,
                     grid_size=grid_size
                 )
+            elif pooling_type == 'nmp':
+                self.pool_net = NmpNet(
+                    embedding_dim=self.embedding_dim,
+                    h_dim=self.h_dim,
+                    mlp_dim=mlp_dim,
+                    bottleneck_dim=bottleneck_dim,
+                    activation=activation,
+                    batch_norm=batch_norm
+                )
 
             mlp_dims = [h_dim + bottleneck_dim, mlp_dim, h_dim]
             self.mlp = make_mlp(
@@ -179,7 +187,7 @@ class NmpNet(nn.Module):
     ):
         super(NmpNet, self).__init__()
 
-        self.mlp_dim = 1024
+        self.mlp_dim = mlp_dim
         self.h_dim = h_dim
         self.bottleneck_dim = bottleneck_dim
         self.embedding_dim = embedding_dim
@@ -257,19 +265,21 @@ class NmpNet(nn.Module):
             curr_end_pos = end_pos[start:end]    #(num_pred, 2)
             
             # Repeat position -> P1, P2, P1, P2
-            curr_end_pos_1 = curr_end_pos.repeat(num_ped-1, 1)
+            curr_end_pos_1 = curr_end_pos.repeat(num_ped, 1)
             # Repeat position -> P1, P1, P2, P2
-            curr_end_pos_2 = self.repeat(curr_end_pos, num_ped-1)
+            curr_end_pos_2 = self.repeat(curr_end_pos, num_ped)
             curr_rel_pos = curr_end_pos_1 - curr_end_pos_2
+            index = np.ravel_multi_index(np.where(np.ones(num_ped)-np.eye(num_ped)),[num_ped,num_ped])
+            curr_rel_pos = curr_rel_pos[index]
             curr_rel_embedding = self.spatial_embedding(curr_rel_pos)
 
             # Neural Message Passing
             rel_rec, rel_send = self.init_adj(num_ped)
-            edge_feat = self.node2edge(curr_hidden, rel_rec, rel_send) # [num_pred*(num_pred-1), h_dim*2]
-            edge_feat = torch.cat([edge_feat, curr_rel_embedding], dim=1)    # [num_pred*(num_pred-1), h_dim*2+embedding_dim]
-            edge_feat = self.mlp1(edge_feat)                      # [num_pred*(num_pred-1), h_dim]
-            node_feat = self.edge2node(edge_feat, rel_rec, rel_send) # [num_pred, h_dim]
-            node_feat = self.mlp2(node_feat)                      # [num_pred, bottleneck_dim]
+            edge_feat = self.node2edge(curr_hidden, rel_rec, rel_send) # [num_ped*(num_ped-1), h_dim*2]
+            edge_feat = torch.cat([edge_feat, curr_rel_embedding], dim=1)    # [num_ped*(num_ped-1), h_dim*2+embedding_dim]
+            edge_feat = self.mlp1(edge_feat)                      # [num_ped*(num_ped-1), h_dim]
+            node_feat = self.edge2node(edge_feat, rel_rec, rel_send) # [num_ped, h_dim]
+            node_feat = self.mlp2(node_feat)                      # [num_ped, bottleneck_dim]
 
             curr_pool_h = node_feat
             pool_h.append(curr_pool_h)
@@ -285,7 +295,7 @@ class PoolHiddenNet(nn.Module):
     ):
         super(PoolHiddenNet, self).__init__()
 
-        self.mlp_dim = 1024
+        self.mlp_dim = mlp_dim
         self.h_dim = h_dim
         self.bottleneck_dim = bottleneck_dim
         self.embedding_dim = embedding_dim
@@ -492,7 +502,7 @@ class TrajectoryGenerator(nn.Module):
         self.pooling_type = pooling_type
         self.noise_first_dim = 0
         self.pool_every_timestep = pool_every_timestep
-        self.bottleneck_dim = 1024
+        self.bottleneck_dim = bottleneck_dim
 
         self.encoder = Encoder(
             embedding_dim=embedding_dim,
@@ -741,3 +751,501 @@ class TrajectoryDiscriminator(nn.Module):
             )
         scores = self.real_classifier(classifier_input)
         return scores
+
+
+# pooling every step when decoding
+class NMPDecoder(nn.Module):
+    """Decoder is part of TrajectoryGenerator"""
+    def __init__(
+        self, seq_len, embedding_dim=64, h_dim=128, mlp_dim=1024, num_layers=1,
+        pool_every_timestep=True, dropout=0.0, bottleneck_dim=1024,
+        activation='relu', batch_norm=True, pooling_type='pool_net',
+        neighborhood_size=2.0, grid_size=8
+    ):
+        super(NMPDecoder, self).__init__()
+
+        self.seq_len = seq_len
+        self.mlp_dim = mlp_dim
+        self.h_dim = h_dim
+        self.embedding_dim = embedding_dim
+        self.pool_every_timestep = pool_every_timestep
+
+        self.decoder = nn.LSTM(
+            embedding_dim, h_dim, num_layers, dropout=dropout
+        )
+
+        if pool_every_timestep:
+            if pooling_type == 'pool_net':
+                self.pool_net = PoolHiddenNet(
+                    embedding_dim=self.embedding_dim,
+                    h_dim=self.h_dim,
+                    mlp_dim=mlp_dim,
+                    bottleneck_dim=bottleneck_dim,
+                    activation=activation,
+                    batch_norm=batch_norm,
+                    dropout=dropout
+                )
+            elif pooling_type == 'spool':
+                self.pool_net = SocialPooling(
+                    h_dim=self.h_dim,
+                    activation=activation,
+                    batch_norm=batch_norm,
+                    dropout=dropout,
+                    neighborhood_size=neighborhood_size,
+                    grid_size=grid_size
+                )
+            elif pooling_type == 'nmp':
+                self.pool_net = NmpNet(
+                    embedding_dim=self.embedding_dim,
+                    h_dim=self.h_dim,
+                    mlp_dim=mlp_dim,
+                    bottleneck_dim=bottleneck_dim,
+                    activation=activation,
+                    batch_norm=batch_norm
+                )
+
+            mlp_dims = [h_dim + bottleneck_dim, mlp_dim, h_dim]
+            self.mlp = make_mlp(
+                mlp_dims,
+                activation=activation,
+                batch_norm=batch_norm,
+                dropout=dropout
+            )
+
+        self.spatial_embedding = nn.Linear(2, embedding_dim)
+        self.hidden2pos = nn.Linear(h_dim, 2)
+        self.context2pos = nn.Linear(bottleneck_dim, 2)
+
+    def forward(self, last_pos, last_pos_rel, state_tuple, seq_start_end):
+        """
+        Inputs:
+        - last_pos: Tensor of shape (batch, 2)
+        - last_pos_rel: Tensor of shape (batch, 2)
+        - state_tuple: (hh, ch) each tensor of shape (num_layers, batch, h_dim)
+        - seq_start_end: A list of tuples which delimit sequences within batch
+        Output:
+        - pred_traj: tensor of shape (self.seq_len, batch, 2)
+        """
+        batch = last_pos.size(0)
+        pred_traj_fake_rel = []
+        decoder_input = self.spatial_embedding(last_pos_rel)
+        decoder_input = decoder_input.view(1, batch, self.embedding_dim)
+
+        for _ in range(self.seq_len):
+            output, state_tuple = self.decoder(decoder_input, state_tuple)
+            rel_pos = self.hidden2pos(output.view(-1, self.h_dim))
+            curr_pos = rel_pos + last_pos
+
+            if self.pool_every_timestep:
+                decoder_h = state_tuple[0]
+                pool_h = self.pool_net(decoder_h, seq_start_end, curr_pos)
+                c_pos = self.context2pos(pool_h)
+                curr_pos = curr_pos + c_pos
+
+            embedding_input = curr_pos - last_pos
+
+            decoder_input = self.spatial_embedding(embedding_input)
+            decoder_input = decoder_input.view(1, batch, self.embedding_dim)
+            pred_traj_fake_rel.append(rel_pos.view(batch, -1))
+            last_pos = curr_pos
+
+        pred_traj_fake_rel = torch.stack(pred_traj_fake_rel, dim=0)
+        return pred_traj_fake_rel, state_tuple[0]
+
+
+class NMPTrajectoryGenerator(nn.Module):
+    def __init__(
+        self, obs_len, pred_len, embedding_dim=64, encoder_h_dim=64,
+        decoder_h_dim=128, mlp_dim=1024, num_layers=1, noise_dim=(0, ),
+        noise_type='gaussian', noise_mix_type='ped', pooling_type=None,
+        pool_every_timestep=True, dropout=0.0, bottleneck_dim=1024,
+        activation='relu', batch_norm=True, neighborhood_size=2.0, grid_size=8
+    ):
+        super(TrajectoryGenerator, self).__init__()
+
+        if pooling_type and pooling_type.lower() == 'none':
+            pooling_type = None
+
+        self.obs_len = obs_len
+        self.pred_len = pred_len
+        self.mlp_dim = mlp_dim
+        self.encoder_h_dim = encoder_h_dim
+        self.decoder_h_dim = decoder_h_dim
+        self.embedding_dim = embedding_dim
+        self.noise_dim = noise_dim
+        self.num_layers = num_layers
+        self.noise_type = noise_type
+        self.noise_mix_type = noise_mix_type
+        self.pooling_type = pooling_type
+        self.noise_first_dim = 0
+        self.pool_every_timestep = pool_every_timestep
+        self.bottleneck_dim = bottleneck_dim
+
+        self.encoder = Encoder(
+            embedding_dim=embedding_dim,
+            h_dim=encoder_h_dim,
+            mlp_dim=mlp_dim,
+            num_layers=num_layers,
+            dropout=dropout
+        )
+
+        self.decoder = NMPDecoder(
+            pred_len,
+            embedding_dim=embedding_dim,
+            h_dim=decoder_h_dim,
+            mlp_dim=mlp_dim,
+            num_layers=num_layers,
+            pool_every_timestep=pool_every_timestep,
+            dropout=dropout,
+            bottleneck_dim=bottleneck_dim,
+            activation=activation,
+            batch_norm=batch_norm,
+            pooling_type=pooling_type,
+            grid_size=grid_size,
+            neighborhood_size=neighborhood_size
+        )
+
+        if self.noise_dim[0] == 0:
+            self.noise_dim = None
+        else:
+            self.noise_first_dim = noise_dim[0]
+
+        # Decoder Hidden
+        if self.mlp_decoder_needed():
+            mlp_decoder_context_dims = [
+                encoder_h_dim, mlp_dim, decoder_h_dim - self.noise_first_dim
+            ]
+
+            self.mlp_decoder_context = make_mlp(
+                mlp_decoder_context_dims,
+                activation=activation,
+                batch_norm=batch_norm,
+                dropout=dropout
+            )
+
+    def add_noise(self, _input, seq_start_end, user_noise=None):
+        """
+        Inputs:
+        - _input: Tensor of shape (_, decoder_h_dim - noise_first_dim)
+        - seq_start_end: A list of tuples which delimit sequences within batch.
+        - user_noise: Generally used for inference when you want to see
+        relation between different types of noise and outputs.
+        Outputs:
+        - decoder_h: Tensor of shape (_, decoder_h_dim)
+        """
+        if not self.noise_dim:
+            return _input
+
+        if self.noise_mix_type == 'global':
+            noise_shape = (seq_start_end.size(0), ) + self.noise_dim
+        else:
+            noise_shape = (_input.size(0), ) + self.noise_dim
+
+        if user_noise is not None:
+            z_decoder = user_noise
+        else:
+            z_decoder = get_noise(noise_shape, self.noise_type)
+
+        if self.noise_mix_type == 'global':
+            _list = []
+            for idx, (start, end) in enumerate(seq_start_end):
+                start = start.item()
+                end = end.item()
+                _vec = z_decoder[idx].view(1, -1)
+                _to_cat = _vec.repeat(end - start, 1)
+                _list.append(torch.cat([_input[start:end], _to_cat], dim=1))
+            decoder_h = torch.cat(_list, dim=0)
+            return decoder_h
+
+        decoder_h = torch.cat([_input, z_decoder], dim=1)
+
+        return decoder_h
+
+    def mlp_decoder_needed(self):
+        if (
+            self.noise_dim or self.pooling_type or
+            self.encoder_h_dim != self.decoder_h_dim
+        ):
+            return True
+        else:
+            return False
+
+    def forward(self, obs_traj, obs_traj_rel, seq_start_end, user_noise=None):
+        """
+        Inputs:
+        - obs_traj: Tensor of shape (obs_len, batch, 2)
+        - obs_traj_rel: Tensor of shape (obs_len, batch, 2)
+        - seq_start_end: A list of tuples which delimit sequences within batch.
+        - user_noise: Generally used for inference when you want to see
+        relation between different types of noise and outputs.
+        Output:
+        - pred_traj_rel: Tensor of shape (self.pred_len, batch, 2)
+        """
+        batch = obs_traj_rel.size(1)
+        # Encode seq
+        final_encoder_h = self.encoder(obs_traj_rel)
+        
+        mlp_decoder_input = final_encoder_h.view(-1, self.encoder_h_dim)
+        # Add Noise
+        if self.mlp_decoder_needed():
+            noise_input = self.mlp_decoder_context(mlp_decoder_input)
+        else:
+            noise_input = mlp_decoder_input
+        decoder_h = self.add_noise(
+            noise_input, seq_start_end, user_noise=user_noise)
+        decoder_h = torch.unsqueeze(decoder_h, 0)
+
+        decoder_c = torch.zeros(
+            self.num_layers, batch, self.decoder_h_dim
+        ).cuda()
+
+        state_tuple = (decoder_h, decoder_c)
+        last_pos = obs_traj[-1]
+        last_pos_rel = obs_traj_rel[-1]
+
+        # Predict Trajectory
+        decoder_out = self.decoder(
+            last_pos,
+            last_pos_rel,
+            state_tuple,
+            seq_start_end,
+        )
+        pred_traj_fake_rel, final_decoder_h = decoder_out
+
+        return pred_traj_fake_rel
+
+
+# two decoder: one is the same as the original lstm decoder
+# the other is utilizing context decoder, decode at once
+
+class NewNMPDecoder(nn.Module):
+    """Decoder is part of TrajectoryGenerator"""
+    def __init__(
+        self, seq_len, embedding_dim=64, h_dim=128, mlp_dim=1024, num_layers=1,
+        pool_every_timestep=True, dropout=0.0, bottleneck_dim=1024,
+        activation='relu', batch_norm=True, pooling_type='pool_net',
+        neighborhood_size=2.0, grid_size=8
+    ):
+        super(NewNMPDecoder, self).__init__()
+
+        self.seq_len = seq_len
+        self.mlp_dim = mlp_dim
+        self.h_dim = h_dim
+        self.embedding_dim = embedding_dim
+        self.pool_every_timestep = pool_every_timestep
+
+        self.decoder = nn.LSTM(
+            embedding_dim, h_dim, num_layers, dropout=dropout
+        )
+
+        self.spatial_embedding = nn.Linear(2, embedding_dim)
+        self.hidden2pos = nn.Linear(h_dim, 2)
+
+    def forward(self, last_pos, last_pos_rel, state_tuple, seq_start_end, c_pos_rel):
+        """
+        Inputs:
+        - last_pos: Tensor of shape (batch, 2)
+        - last_pos_rel: Tensor of shape (batch, 2)
+        - state_tuple: (hh, ch) each tensor of shape (num_layers, batch, h_dim)
+        - seq_start_end: A list of tuples which delimit sequences within batch
+        Output:
+        - pred_traj: tensor of shape (self.seq_len, batch, 2)
+        """
+        batch = last_pos.size(0)
+        pred_traj_fake_rel = []
+        decoder_input = self.spatial_embedding(last_pos_rel)
+        decoder_input = decoder_input.view(1, batch, self.embedding_dim)
+
+        for pred_id in range(self.seq_len):
+            output, state_tuple = self.decoder(decoder_input, state_tuple)
+            rel_pos = self.hidden2pos(output.view(-1, self.h_dim))
+            curr_pos = rel_pos + c_pos_rel[:,pred_id,:] + last_pos
+
+            embedding_input = curr_pos - last_pos
+
+            decoder_input = self.spatial_embedding(embedding_input)
+            decoder_input = decoder_input.view(1, batch, self.embedding_dim)
+            pred_traj_fake_rel.append(embedding_input.view(batch, -1))
+            last_pos = curr_pos
+
+        pred_traj_fake_rel = torch.stack(pred_traj_fake_rel, dim=0)
+        return pred_traj_fake_rel, state_tuple[0]
+
+class NewNMPTrajectoryGenerator(nn.Module):
+    def __init__(
+        self, obs_len, pred_len, embedding_dim=64, encoder_h_dim=64,
+        decoder_h_dim=128, mlp_dim=1024, num_layers=1, noise_dim=(0, ),
+        noise_type='gaussian', noise_mix_type='ped', pooling_type=None,
+        pool_every_timestep=True, dropout=0.0, bottleneck_dim=1024,
+        activation='relu', batch_norm=True, neighborhood_size=2.0, grid_size=8
+    ):
+        super(NewNMPTrajectoryGenerator, self).__init__()
+
+        if pooling_type and pooling_type.lower() == 'none':
+            pooling_type = None
+
+        self.obs_len = obs_len
+        self.pred_len = pred_len
+        self.mlp_dim = mlp_dim
+        self.encoder_h_dim = encoder_h_dim
+        self.decoder_h_dim = decoder_h_dim
+        self.embedding_dim = embedding_dim
+        self.noise_dim = noise_dim
+        self.num_layers = num_layers
+        self.noise_type = noise_type
+        self.noise_mix_type = noise_mix_type
+        self.pooling_type = pooling_type
+        self.noise_first_dim = 0
+        self.pool_every_timestep = pool_every_timestep
+        self.bottleneck_dim = bottleneck_dim
+
+        self.encoder = Encoder(
+            embedding_dim=embedding_dim,
+            h_dim=encoder_h_dim,
+            mlp_dim=mlp_dim,
+            num_layers=num_layers,
+            dropout=dropout
+        )
+
+        self.decoder = NewNMPDecoder(
+            pred_len,
+            embedding_dim=embedding_dim,
+            h_dim=decoder_h_dim,
+            mlp_dim=mlp_dim,
+            num_layers=num_layers,
+            pool_every_timestep=pool_every_timestep,
+            dropout=dropout,
+            bottleneck_dim=bottleneck_dim,
+            activation=activation,
+            batch_norm=batch_norm,
+            pooling_type=pooling_type,
+            grid_size=grid_size,
+            neighborhood_size=neighborhood_size
+        )
+
+        self.pool_net = NmpNet(
+                embedding_dim=self.embedding_dim,
+                h_dim=encoder_h_dim,
+                mlp_dim=mlp_dim,
+                bottleneck_dim=bottleneck_dim,
+                activation=activation,
+                batch_norm=batch_norm
+            )
+        if self.noise_dim[0] == 0:
+            self.noise_dim = None
+        else:
+            self.noise_first_dim = noise_dim[0]
+
+        # Decoder Hidden
+        if self.mlp_decoder_needed():
+            mlp_decoder_context_dims = [
+                encoder_h_dim, mlp_dim, decoder_h_dim - self.noise_first_dim
+            ]
+
+            self.mlp_decoder_context = make_mlp(
+                mlp_decoder_context_dims,
+                activation=activation,
+                batch_norm=batch_norm,
+                dropout=dropout
+            )
+        self.context2pos = nn.Linear(bottleneck_dim, 2*pred_len)
+
+    def add_noise(self, _input, seq_start_end, user_noise=None):
+        """
+        Inputs:
+        - _input: Tensor of shape (_, decoder_h_dim - noise_first_dim)
+        - seq_start_end: A list of tuples which delimit sequences within batch.
+        - user_noise: Generally used for inference when you want to see
+        relation between different types of noise and outputs.
+        Outputs:
+        - decoder_h: Tensor of shape (_, decoder_h_dim)
+        """
+        if not self.noise_dim:
+            return _input
+
+        if self.noise_mix_type == 'global':
+            noise_shape = (seq_start_end.size(0), ) + self.noise_dim
+        else:
+            noise_shape = (_input.size(0), ) + self.noise_dim
+
+        if user_noise is not None:
+            z_decoder = user_noise
+        else:
+            z_decoder = get_noise(noise_shape, self.noise_type)
+
+        if self.noise_mix_type == 'global':
+            _list = []
+            for idx, (start, end) in enumerate(seq_start_end):
+                start = start.item()
+                end = end.item()
+                _vec = z_decoder[idx].view(1, -1)
+                _to_cat = _vec.repeat(end - start, 1)
+                _list.append(torch.cat([_input[start:end], _to_cat], dim=1))
+            decoder_h = torch.cat(_list, dim=0)
+            return decoder_h
+
+        decoder_h = torch.cat([_input, z_decoder], dim=1)
+
+        return decoder_h
+
+    def mlp_decoder_needed(self):
+        if (
+            self.noise_dim or self.pooling_type or
+            self.encoder_h_dim != self.decoder_h_dim
+        ):
+            return True
+        else:
+            return False
+
+    def forward(self, obs_traj, obs_traj_rel, seq_start_end, user_noise=None):
+        """
+        Inputs:
+        - obs_traj: Tensor of shape (obs_len, batch, 2)
+        - obs_traj_rel: Tensor of shape (obs_len, batch, 2)
+        - seq_start_end: A list of tuples which delimit sequences within batch.
+        - user_noise: Generally used for inference when you want to see
+        relation between different types of noise and outputs.
+        Output:
+        - pred_traj_rel: Tensor of shape (self.pred_len, batch, 2)
+        """
+        batch = obs_traj_rel.size(1)
+        # Encode seq
+        final_encoder_h = self.encoder(obs_traj_rel)
+
+        # NMP decoder
+        end_pos = obs_traj[-1, :, :]
+        pool_h = self.pool_net(final_encoder_h, seq_start_end, end_pos)
+        c_pos_rel = self.context2pos(pool_h)
+        c_pos_rel = c_pos_rel.view(-1, self.pred_len, 2)
+        
+        # original decoder
+        mlp_decoder_input = final_encoder_h.view(-1, self.encoder_h_dim)
+        # Add Noise
+        if self.mlp_decoder_needed():
+            noise_input = self.mlp_decoder_context(mlp_decoder_input)
+        else:
+            noise_input = mlp_decoder_input
+        decoder_h = self.add_noise(
+            noise_input, seq_start_end, user_noise=user_noise)
+        decoder_h = torch.unsqueeze(decoder_h, 0)
+
+        decoder_c = torch.zeros(
+            self.num_layers, batch, self.decoder_h_dim
+        ).cuda()
+
+        state_tuple = (decoder_h, decoder_c)
+        last_pos = obs_traj[-1]
+        last_pos_rel = obs_traj_rel[-1]
+
+        # Predict Trajectory
+        decoder_out = self.decoder(
+            last_pos,
+            last_pos_rel,
+            state_tuple,
+            seq_start_end,
+            c_pos_rel
+        )
+        pred_traj_fake_rel, final_decoder_h = decoder_out
+
+        return pred_traj_fake_rel
+

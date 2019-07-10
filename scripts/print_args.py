@@ -11,7 +11,6 @@ parser.add_argument('--checkpoint')
 
 def main(args):
     checkpoint = torch.load(args.checkpoint, map_location='cpu')
-    ipdb.set_trace()
     for k, v in checkpoint['args'].items():
         print(k, v)
 
